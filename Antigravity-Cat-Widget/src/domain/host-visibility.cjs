@@ -21,12 +21,12 @@ function hostPlacement(state,scale,offsetX=18,offsetY=18,dock=""){
  return{scale:effectiveScale,...characterPlacement(area,effectiveScale,{width,height},dock==="left"?area.x:dock==="right"?area.x+area.width-effectiveScale:area.x+area.width-effectiveScale-offsetX,area.y+area.height-height-offsetY)};
 }
 class ForegroundMonitor extends EventEmitter{
- constructor(){super();this.state={kind:"unknown",bounds:null};this.lastReport=0;}
+ constructor(){super();this.state={kind:"unknown",bounds:null,hostAlive:false,attached:false,hostId:"0"};this.lastReport=0;}
  start(handle){
   if(this.child&&Date.now()-this.lastReport>5000)this.stop();
   if(this.child)return;
   this.lastReport=Date.now();
-  const child=spawn(path.join(__dirname,"../native/ForegroundHost.exe"),[String(process.pid),...(handle?[handle.readBigUInt64LE().toString()]:[])],{windowsHide:true,stdio:["pipe","pipe","ignore"]});this.child=child;this.bound=!!handle;
+  const child=spawn(path.join(__dirname,"../native/ForegroundHost.exe"),[String(process.pid),...(handle?[handle.readBigUInt64LE().toString()]:[])],{windowsHide:true,stdio:["pipe","pipe","ignore"]});child.stdin?.on("error",()=>{});this.child=child;this.bound=!!handle;
   let pending="";
   child.stdout.on("data",chunk=>{
    if(this.child!==child)return;
@@ -34,9 +34,9 @@ class ForegroundMonitor extends EventEmitter{
    while((index=pending.indexOf("\n"))>=0){const line=pending.slice(0,index);pending=pending.slice(index+1);try{const state=JSON.parse(line);if(["host","self","other","unknown"].includes(state.kind)&&(!state.bounds||validBounds(state.bounds))){this.state=state;this.emit("change",state);}}catch{}}
    if(pending.length>8192)pending="";
   });
-  const ended=()=>{if(this.child!==child)return;this.child=null;this.state={kind:"unknown",bounds:null};this.emit("change",this.state);};
+  const ended=()=>{if(this.child!==child)return;this.child=null;this.state={kind:"unknown",bounds:null,hostAlive:false,attached:false,hostId:"0"};this.emit("change",this.state);};
   child.on("error",ended);child.on("exit",ended);
  }
- stop(){const child=this.child;this.child=null;if(child&&!this.bound){child.kill();return;}if(child){child.stdin.end("detach\n");const timer=setTimeout(()=>child.kill(),1000);timer.unref();}this.state={kind:"unknown",bounds:null};}
+ stop(force=false){const child=this.child;this.child=null;if(child&&(force||!this.bound)){try{child.kill();}catch{}return;}if(child){try{child.stdin.end("detach\n");}catch{}const timer=setTimeout(()=>{try{child.kill();}catch{}},1000);timer.unref();}this.state={kind:"unknown",bounds:null};}
 }
 module.exports={ForegroundMonitor,hostPlacement,validBounds,characterPlacement,snapToEdges};

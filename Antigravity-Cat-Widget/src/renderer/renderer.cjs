@@ -3,9 +3,9 @@
  let snapshot,selected="quota",closed=true,temporary=null,timeout,pointer=null,gesture=0,currentSound=null,petAt=0,hoverCount=0,hoverTime=0,hit=null;
  let personality,talkState,talkLine,eggTimer,autoHide,hideAnimation,lastBubbleOpen=null;
  function armBubble(){clearTimeout(autoHide);if(!closed)autoHide=setTimeout(()=>{closed=true;render();},6500);}
- function bubbleVisibility(open){const bubble=$("bubble");if(lastBubbleOpen===open)return;lastBubbleOpen=open;clearTimeout(hideAnimation);bubble.inert=!open;bubble.setAttribute("aria-hidden",String(!open));if(open){bubble.hidden=false;void bubble.offsetWidth;requestAnimationFrame(()=>{if(lastBubbleOpen)bubble.dataset.open="true";});}else{bubble.dataset.open="false";hideAnimation=setTimeout(()=>{if(!lastBubbleOpen)bubble.hidden=true;},snapshot?.settings.reducedMotion?0:180);}}
+ function bubbleVisibility(open){const bubble=$("bubble"),dots=[$("bubble-dot-md"),$("bubble-dot-sm")].filter(Boolean);if(lastBubbleOpen===open)return;lastBubbleOpen=open;clearTimeout(hideAnimation);bubble.inert=!open;bubble.setAttribute("aria-hidden",String(!open));if(open){bubble.hidden=false;for(const d of dots)d.hidden=false;void bubble.offsetWidth;requestAnimationFrame(()=>{if(lastBubbleOpen){bubble.dataset.open="true";for(const d of dots)d.dataset.open="true";}});}else{bubble.dataset.open="false";for(const d of dots)d.dataset.open="false";hideAnimation=setTimeout(()=>{if(!lastBubbleOpen){bubble.hidden=true;for(const d of dots)d.hidden=true;}},snapshot?.settings.reducedMotion?0:290);}}
  function stopReaction(){clearTimeout(eggTimer);if(mascot.dataset.expression){delete mascot.dataset.expression;talkState=null;}}
- const pages=["quota","talk","today","latest"],format=v=>typeof v==="number"?v.toLocaleString():"—";
+ const pages=["quota","talk","today","latest"],format=v=>typeof v==="number"?v.toLocaleString():"—",formatM=v=>typeof v==="number"?(v/1e6).toFixed(2)+"M":"—";
  function stopSound(){gesture++;if(currentSound){currentSound.pause();currentSound.currentTime=0;currentSound=null;}}
  async function play(kind){
   const token=++gesture;if(currentSound)currentSound.pause();if(!snapshot?.settings.sound||snapshot.settings.volume===0)return;
@@ -28,27 +28,28 @@
     $("percent"+suffix).dataset.level=$("track"+suffix).dataset.level;
     if(known)$("track"+suffix).setAttribute("aria-valuenow",value);else $("track"+suffix).removeAttribute("aria-valuenow");
    }
-   $("caption").textContent=s.manualQuota?"手动记录":snapshot.quotaWindows?.stale?"上次读取 · 待更新":snapshot.quotaWindows?.cached?"上次读取":"";
+   $("caption").textContent=s.manualQuota?"手动记录":snapshot.quotaWindows?.stale?"上次读取 · 点击刷新":snapshot.quotaWindows?.cached?"上次读取":"";
    $("meta").textContent="";
   }else if(selected==="today"){
-   $("title").textContent="今日用量 · 本机";$("value").hidden=false;$("value").textContent=format(l.todayTokens.total);$("detail").hidden=false;
-   $("detail").textContent="输入 "+format(l.todayTokens.prompt)+" · 缓存 "+format(l.todayTokens.cache)+" · 输出 "+format(l.todayTokens.output);
+   $("title").textContent="今日用量 · 本机";$("value").hidden=false;$("value").textContent=formatM(l.todayTokens.total);$("detail").hidden=false;
+   $("detail").textContent="输入 "+formatM(l.todayTokens.prompt)+" · 缓存 "+formatM(l.todayTokens.cache)+" · 输出 "+formatM(l.todayTokens.output);
    $("meta").textContent=l.todaySteps+" 个模型步骤 · "+(l.partial?"部分字段缺失":snapshot.source.coverage||"只读日志");
   }else if(selected==="latest"){
-   const r=l.latest;$("title").textContent="最近模型步骤";$("value").hidden=false;$("value").textContent=format(r?.tokens.total);$("detail").hidden=false;$("detail").textContent=r?"输入 "+format(r.tokens.input)+" · 输出 "+format(r.tokens.output):"尚无数值记录";
+   const r=l.latest;$("title").textContent="最近模型步骤";$("value").hidden=false;$("value").textContent=formatM(r?.tokens.total);$("detail").hidden=false;$("detail").textContent=r?"输入 "+formatM(r.tokens.input)+" · 输出 "+formatM(r.tokens.output):"尚无数值记录";
    $("meta").textContent=r?"本机记录 · 费用 —（无价格来源）":"等待真实会话记录";
-  }else{$("title").textContent="喵言喵语";$("value").hidden=false;$("value").classList.add("agy-phrase");if(talkState!==(snapshot.persistentState||snapshot.state)){talkState=snapshot.persistentState||snapshot.state;talkLine=personality.say(talkState==="offline"?"idle":talkState);}$("value").textContent=talkLine;$("meta").textContent="点点本喵，再聊一句";}
+  }else{$("title").textContent="";$("value").hidden=false;$("value").classList.add("agy-phrase");if(!talkLine){talkLine=personality.say(snapshot?.persistentState||"idle");}$("value").textContent=talkLine;$("meta").textContent="";}
   if(selected!=="talk")$("value").classList.remove("agy-phrase");
  }
  function message(title,body,detail="",ms=4500,meta=""){clearTimeout(timeout);temporary={title,body,detail,meta};closed=false;render();if(ms>0)timeout=setTimeout(()=>{temporary=null;render();},ms);}
  function select(delta){armBubble();clearTimeout(timeout);temporary=null;closed=false;selected=pages[(pages.indexOf(selected)+delta+pages.length)%pages.length];api.save({bubblePage:selected});render();}
  $("prev").onclick=()=>select(-1);$("next").onclick=()=>select(1);$("close").onclick=()=>{clearTimeout(autoHide);closed=true;render();};$("toggle").onclick=()=>{closed=!closed;if(!snapshot.settings.bubbleOn)api.save({bubbleOn:true});armBubble();render();};$("settings").onclick=()=>api.command("settings");
+ $("caption").style.cursor="pointer";$("caption").title="点击立即刷新额度";$("caption").onclick=()=>{api.command("refresh");message("正在刷新","正在拉取最新额度...","",1200);};
  window.addEventListener("contextmenu",e=>{e.preventDefault();api.command("menu");});
  $("bubble").addEventListener("pointerenter",()=>clearTimeout(autoHide));$("bubble").addEventListener("pointerleave",armBubble);
  const motion=$("motion");
  let spring;
  function animatePress(pressed){motion.dataset.pressed=String(pressed);}
- function activate(){if(selected!=="talk"){showQuota();return;}if(temporary)return;closed=false;armBubble();talkState=snapshot.persistentState||snapshot.state;talkLine=personality.say(talkState==="offline"?"idle":talkState);render();}
+ function activate(){clearTimeout(timeout);temporary=null;armBubble();api.command("refresh");if(closed){closed=false;selected="quota";api.save({bubblePage:"quota",bubbleOn:true});render();return;}if(selected==="quota"){selected="talk";api.save({bubblePage:"talk",bubbleOn:true});}if(selected==="talk"){talkLine=personality.say(snapshot?.persistentState||"idle");}render();}
  function showQuota(){clearTimeout(timeout);temporary=null;closed=false;armBubble();selected="quota";api.save({bubblePage:"quota",bubbleOn:true});render();}
  motion.addEventListener("pointerdown",e=>{if(e.button!==0)return;pointer={id:e.pointerId,x:e.screenX,y:e.screenY,moved:false};motion.setPointerCapture(e.pointerId);animatePress(true);api.pointer({action:"down",point:{x:e.screenX,y:e.screenY}});play("press");});
  motion.addEventListener("pointermove",e=>{
@@ -62,7 +63,7 @@
  window.addEventListener("mouseleave",()=>{hit=false;api.hit(false);});
  api.subscribe(data=>{if(snapshot&&(!data.settings.sound||data.settings.soundSet!==snapshot.settings.soundSet||data.settings.volume!==snapshot.settings.volume))stopSound();snapshot=data;if(!data.settings.easterEggs||!["idle","offline","pressed","release"].includes(data.state))stopReaction();render();});
  api.onStep(step=>{if(!closed&&snapshot?.settings.turnCostOn){message("模型步骤完成",format(step.tokens.total)+" tokens","输入 "+format(step.tokens.input)+" · 输出 "+format(step.tokens.output),snapshot.settings.turnCostDurationMs,"真实本机记录 · 非整轮计费");play("release");}});
- function reaction(manual=false,clicked=false){if(!snapshot||!personality)return;const kind=personality.reaction({enabled:snapshot.settings.easterEggs,hidden:document.hidden||closed||!snapshot.settings.bubbleOn,busy:!!temporary||!!pointer||(clicked&&!!mascot.dataset.expression),state:clicked?snapshot.persistentState:snapshot.state},manual,clicked);if(!kind)return;mascot.dataset.expression=kind;if(selected==="talk"){talkLine=personality.say(kind);render();}clearTimeout(eggTimer);eggTimer=setTimeout(()=>{delete mascot.dataset.expression;talkState=null;render();},3200);}
+ function reaction(manual=false,clicked=false){if(!snapshot||!personality)return;const kind=personality.reaction({enabled:snapshot.settings.easterEggs,hidden:document.hidden||closed||!snapshot.settings.bubbleOn,busy:!!temporary||!!pointer||(clicked&&!!mascot.dataset.expression),state:clicked?snapshot.persistentState:snapshot.state},manual,clicked);if(!kind)return;mascot.dataset.expression=kind;if(selected==="talk"&&!clicked){talkLine=personality.say(kind);render();}clearTimeout(eggTimer);eggTimer=setTimeout(()=>{delete mascot.dataset.expression;talkState=null;render();},3200);}
  api.onReaction(()=>reaction(true));const ambient=setInterval(()=>reaction(),30000);
  snapshot=await api.get();personality=new window.StarPersonality(snapshot.dialogue);selected=snapshot.settings.bubblePage;render();
  window.addEventListener("beforeunload",()=>{clearTimeout(timeout);clearTimeout(autoHide);clearTimeout(hideAnimation);clearTimeout(eggTimer);clearInterval(ambient);stopSound();});

@@ -1,5 +1,5 @@
 const {app,BrowserWindow,screen,Tray,Menu,ipcMain,nativeImage,globalShortcut,shell,powerMonitor}=require("electron");
-const path=require("node:path"),os=require("node:os");
+const path=require("node:path"),os=require("node:os");for(const s of [process.stdout,process.stderr])s?.on?.("error",err=>{if(err?.code!=="EPIPE")throw err;});
 const {SettingsManager}=require("../domain/settings.cjs"),{UsageLedger}=require("../domain/ledger.cjs"),{WidgetStateMachine}=require("../domain/state-machine.cjs"),{TranscriptAdapter}=require("../adapters/transcript-adapter.cjs"),{AudioManager}=require("../domain/audio-manager.cjs");
 const {HostQuotaAdapter}=require("../adapters/host-quota.cjs");
 const {ForegroundMonitor,hostPlacement,characterPlacement,snapToEdges}=require("../domain/host-visibility.cjs");
@@ -12,7 +12,7 @@ else if(process.argv.includes("--quit"))app.quit();
 else{
  let quitting=false,recoveryTimer,visualTimer,visualChecking=false,blankFrames=0,visualCheckInterval=15000,uptimeCheckTimer;
  const recoveryLog=reason=>{try{require("node:fs").appendFileSync(path.join(dataDir,"recovery.log"),new Date().toISOString()+" "+reason+"\n");}catch{}};
- let win,tray,panel,drag=null,source={online:false,source:"正在读取本机日志",files:0},saveTimer,displayScale=null,hostArea=null,hostLayout=null,dragTimer=null,facing="right",dockSide="",artShift=0,hostWasOnline=false,offlineTimer;
+ let win,tray,panel,drag=null,source={online:false,source:"正在读取本机日志",files:0},saveTimer,displayScale=null,hostArea=null,hostLayout=null,dragTimer=null,facing="right",dockSide="",artShift=0,hostWasOnline=false,offlineTimer,hostEverSeen=false,hostQuitTimer=null;
  const foreground=new ForegroundMonitor(),quotaAdapter=new HostQuotaAdapter();
  const dialogue=require("../../assets/dialogue/zh-CN.json");
  const running=new Set();
@@ -23,14 +23,35 @@ else{
  function syncQuotaState(){if(["idle","warning"].includes(sm.persistentState))sm.setPersistentState((settings.get("manualQuota")?[settings.get("manualPercent"),settings.get("manualWeeklyPercent")]:[quotaAdapter.snapshot.fiveHour,quotaAdapter.snapshot.weekly]).some(v=>typeof v==="number"&&v<=20)?"warning":"idle");}
  function bounds(size=settings.get("scale")){return{width:Math.max(360,size+80),height:Math.round(size*1146/1372+340)};}
  function safePosition(x,y,w,h){const area=screen.getDisplayNearestPoint({x:Number.isFinite(x)?x:screen.getPrimaryDisplay().workArea.x,y:Number.isFinite(y)?y:0}).workArea;return{x:Math.round(Number.isFinite(x)?Math.max(area.x,Math.min(area.x+area.width-w,x)):area.x+area.width-w-18),y:Math.round(Number.isFinite(y)?Math.max(area.y,Math.min(area.y+area.height-h,y)):area.y+area.height-h-18)};}
+ function checkHostLife(state){
+  if(!settings.get("closeWithHost"))return;
+  const alive=state?.hostAlive===true||state?.attached===true||state?.kind==="host"||(state?.hostId&&state?.hostId!=="0");
+  if(alive){
+   hostEverSeen=true;
+   if(hostQuitTimer){clearTimeout(hostQuitTimer);hostQuitTimer=null;}
+  }else if(hostEverSeen&&!quitting){
+   if(!hostQuitTimer){
+    hostQuitTimer=setTimeout(()=>{
+     if(quitting)return;
+     const s=foreground.state;
+     const stillAlive=s?.hostAlive===true||s?.attached===true||s?.kind==="host"||(s?.hostId&&s?.hostId!=="0");
+     if(!stillAlive&&settings.get("closeWithHost")){
+      recoveryLog("host-closed-auto-quit");
+      process.exitCode=10;
+      app.quit();
+     }else hostQuitTimer=null;
+    },2000);
+   }
+  }
+ }
  function syncVisibility(){
   if(!win||win.isDestroyed())return;
+  checkHostLife(foreground.state);
   if(!settings.get("hostWindowOnly")){
    hostArea=null;hostLayout=null;displayScale=settings.get("scale");
-   if(!win.isVisible())win.showInactive();
+   if(!settings.get("hostWindowOnly")&&!win.isVisible())win.showInactive();
    return;
   }
-  if(drag)return;
   const previousArea=hostArea;let state=foreground.state;
   if(state.bounds)state={...state,bounds:screen.screenToDipRect(null,state.bounds)};
   const placement=hostPlacement(state,settings.get("scale"),settings.get("hostOffsetX"),settings.get("hostOffsetY"),settings.get("hostDock"));
@@ -42,6 +63,7 @@ else{
    if(win.isVisible())win.hide();
    return;
   }
+  if(drag)return;
 
   // Host is available - show widget and update position
   hostArea=state.bounds;displayScale=placement.scale;artShift=placement.artShift;
@@ -51,8 +73,8 @@ else{
   const nativeTranslation=state.nativeFollowing&&previousArea&&hostLayout===nextLayout;
   const layoutChanged=hostLayout!==nextLayout;
   hostLayout=nextLayout;
-  const old=win.getBounds(),stationary=nativeTranslation&&previousArea&&previousArea.x===hostArea.x&&previousArea.y===hostArea.y;
-  if((!nativeTranslation||stationary)&&Object.keys(placement.bounds).some(key=>Math.abs(old[key]-placement.bounds[key])>2))win.setBounds(placement.bounds);
+  // Native geometry can already be newer than this IPC report; never replay a translation.
+  if(!nativeTranslation){const old=win.getBounds();if(Object.keys(placement.bounds).some(key=>Math.abs(old[key]-placement.bounds[key])>2))win.setBounds(placement.bounds);}
 
   // Ensure widget is visible when host is available
   if(!win.isVisible()){
@@ -69,20 +91,20 @@ else{
  }
  function show(){
   if(!win||win.isDestroyed())createWindow();
-  if(settings.get("hostWindowOnly"))foreground.start(win.getNativeWindowHandle());
+  if(settings.get("hostWindowOnly")||settings.get("closeWithHost"))foreground.start(win.getNativeWindowHandle());
   // The widget must enter the visible state exactly once. From then on the native
   // helper controls z-order without hiding or moving the surface off-screen.
-  if(!win.isVisible())win.showInactive();
+  if(!settings.get("hostWindowOnly")&&!win.isVisible())win.showInactive();
   syncVisibility();
   win.setIgnoreMouseEvents(settings.get("clickThrough"),{forward:true});
  }
  function apply(partial){
-  const allowed=["scale","alwaysOnTop","reducedMotion","sound","volume","soundSet","bubbleOn","turnCostOn","turnCostDurationMs","clickThrough","snap","bubblePage","manualQuota","manualPercent","manualWeeklyPercent","hostWindowOnly","easterEggs"];
+  const allowed=["scale","alwaysOnTop","reducedMotion","sound","volume","soundSet","bubbleOn","turnCostOn","turnCostDurationMs","clickThrough","snap","bubblePage","manualQuota","manualPercent","manualWeeklyPercent","hostWindowOnly","closeWithHost","easterEggs"];
   const oldScale=settings.get("scale"),oldHostOnly=settings.get("hostWindowOnly");
   if(!oldHostOnly&&partial?.hostWindowOnly===true&&win){const pos=win.getBounds();settings.update({x:pos.x,y:pos.y});}
   settings.update(Object.fromEntries(Object.entries(partial||{}).filter(([k])=>allowed.includes(k))));
   syncQuotaState();
-  if(settings.get("hostWindowOnly"))foreground.start(win?.getNativeWindowHandle());else foreground.stop();
+  if(settings.get("hostWindowOnly")||settings.get("closeWithHost"))foreground.start(win?.getNativeWindowHandle());else foreground.stop();
   if(win){if(!settings.get("hostWindowOnly")&&(settings.get("scale")!==oldScale||oldHostOnly)){const old=win.getBounds(),dim=bounds();const pos=oldHostOnly?safePosition(settings.get("x"),settings.get("y"),dim.width,dim.height):safePosition(old.x+old.width-dim.width,old.y+old.height-dim.height,dim.width,dim.height);win.setBounds({...pos,...dim});}win.setAlwaysOnTop(!settings.get("hostWindowOnly")&&settings.get("alwaysOnTop"));win.setIgnoreMouseEvents(settings.get("clickThrough"),{forward:true});syncVisibility();}
   audio.setEnabled(settings.get("sound"));audio.setVolume(settings.get("volume"));audio.setPreset(settings.get("soundSet"));publish();updateMenu();return snapshot();
  }
@@ -97,10 +119,11 @@ else{
   if(!tray)return;
   tray.setContextMenu(Menu.buildFromTemplate([{label:"喵言喵语 · Gemini 桌宠",enabled:false},{label:"显示 / 唤回挂件",click:recall},{label:"重启挂件",click:()=>{app.relaunch();app.quit();}},{label:"设置与数据来源",click:openSettings},{type:"separator"},
   {label:"仅在 Antigravity 窗口内显示",type:"checkbox",checked:settings.get("hostWindowOnly"),click:()=>apply({hostWindowOnly:!settings.get("hostWindowOnly")})},
+   {label:"随 Antigravity 一起退出",type:"checkbox",checked:settings.get("closeWithHost"),click:()=>apply({closeWithHost:!settings.get("closeWithHost")})},
   {label:"显示气泡",type:"checkbox",checked:settings.get("bubbleOn"),click:()=>apply({bubbleOn:!settings.get("bubbleOn")})},
   {label:"桌面模式始终置顶",type:"checkbox",enabled:!settings.get("hostWindowOnly"),checked:!settings.get("hostWindowOnly")&&settings.get("alwaysOnTop"),click:()=>apply({alwaysOnTop:!settings.get("alwaysOnTop")})},
   {label:"鼠标穿透 · Ctrl+Alt+Shift+G 恢复",type:"checkbox",checked:settings.get("clickThrough"),click:()=>apply({clickThrough:!settings.get("clickThrough")})},
-  {label:"停靠左下角",click:()=>dock("left")},{label:"停靠右下角",click:()=>dock("right")},{label:"重置位置",click:reset},{type:"separator"},{label:"退出喵言喵语",click:()=>app.quit()}]));
+  {label:"停靠左下角",click:()=>dock("left")},{label:"停靠右下角",click:()=>dock("right")},{label:"重置位置",click:reset},{type:"separator"},{label:"退出喵言喵语",click:()=>{process.exitCode=0;app.quit();}}]));
  }
  function createWindow(){
   const dim=bounds(),pos=safePosition(settings.get("x"),settings.get("y"),dim.width,dim.height);
@@ -121,7 +144,7 @@ else{
   if(!trusted(e))return;
   if(command==="settings")openSettings();
   else if(command==="menu")tray?.popUpContextMenu();
-  else if(command==="quit")app.quit();
+  else if(command==="quit"){process.exitCode=0;app.quit();}
   else if(command==="reset")reset();
   else if(command==="dock-left")dock("left");else if(command==="dock-right")dock("right");
   else if(command==="show-bubble")apply({bubbleOn:true});
@@ -167,7 +190,7 @@ else{
  ipcMain.handle("widget:audio",(e,type)=>trusted(e)&&["press","release"].includes(type)?audio.getAudioFile(type):null);
  quotaAdapter.on("change",()=>{syncQuotaState();publish();});
  sm.subscribe(publish);
- foreground.on("change",()=>{if(syncVisibility()!==false)publish();});
+ foreground.on("change",state=>{checkHostLife(state);if(syncVisibility()!==false)publish();});
  adapter.on("turnDone",step=>{
   const recorded=ledger.recordStep(step);
   running.delete(step.sessionId+":"+step.step_index);
@@ -182,9 +205,9 @@ else{
   createWindow();tray=new Tray(nativeImage.createFromPath(path.join(__dirname,"../../assets/character-packs/gemini-star-v1/frames/idle.png")).resize({width:24,height:24}));
   tray.setToolTip("喵言喵语 · Antigravity");tray.on("double-click",recall);updateMenu();
   globalShortcut.register("CommandOrControl+Alt+G",recall);globalShortcut.register("CommandOrControl+Alt+Shift+G",()=>{apply({clickThrough:false});recall();});
-  if(settings.get("hostWindowOnly"))foreground.start(win?.getNativeWindowHandle());
+  if(settings.get("hostWindowOnly")||settings.get("closeWithHost"))foreground.start(win?.getNativeWindowHandle());
   audio.setEnabled(settings.get("sound"));audio.setVolume(settings.get("volume"));audio.setPreset(settings.get("soundSet"));adapter.start();quotaAdapter.start();
-  recoveryTimer=setInterval(()=>{if(!win||win.isDestroyed()){show();return;}if(settings.get("hostWindowOnly"))foreground.start(win.getNativeWindowHandle());},2000);
+  recoveryTimer=setInterval(()=>{if(!win||win.isDestroyed()){show();return;}if(settings.get("hostWindowOnly")||settings.get("closeWithHost"))foreground.start(win.getNativeWindowHandle());checkHostLife(foreground.state);},2000);
   // Adaptive visual check interval based on uptime
   uptimeCheckTimer=setInterval(()=>{
    const uptime=process.uptime();
@@ -192,9 +215,9 @@ else{
   },300000); // Check every 5 minutes
   let lastVisualCheck=0;
   visualTimer=setInterval(async()=>{
+   if(visualChecking||drag||!win||win.isDestroyed()||!win.isVisible()||(settings.get("hostWindowOnly")&&!hostArea))return;
    if(Date.now()-lastVisualCheck<visualCheckInterval)return;
    lastVisualCheck=Date.now();
-   if(visualChecking||drag||!win||win.isDestroyed()||!win.isVisible()||(settings.get("hostWindowOnly")&&!hostArea))return;
    visualChecking=true;const checked=win;
    try{
     const healthy=await Promise.race([checked.webContents.executeJavaScript(`(()=>{const face=document.querySelector('.agy-face');if(!face)return false;const r=face.getBoundingClientRect();if(r.width<20||r.height<20)return false;let node=face;while(node){const s=getComputedStyle(node);if(s.display==='none'||s.visibility==='hidden'||Number(s.opacity)===0)return false;node=node.parentElement;}return [...face.querySelectorAll('img')].some(img=>img.complete&&img.naturalWidth>0&&Number(getComputedStyle(img).opacity)>0);})()`),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error("renderer-check-timeout")),4000);timer.unref();})]);
@@ -216,8 +239,8 @@ else{
   screen.on("display-removed",reset);
   screen.on("display-metrics-changed",()=>{if(settings.get("hostWindowOnly")){syncVisibility();publish();}});
  });
- app.on("before-quit",()=>{quitting=true;clearInterval(visualTimer);clearInterval(recoveryTimer);clearInterval(dragTimer);foreground.stop();adapter.stop();quotaAdapter.stop();sm.destroy();clearTimeout(saveTimer);ledger.save();globalShortcut.unregisterAll();tray?.destroy();});
- app.on("window-all-closed",()=>{if(!tray)app.quit();});
+ app.on("before-quit",()=>{quitting=true;clearTimeout(hostQuitTimer);clearTimeout(offlineTimer);clearInterval(visualTimer);clearInterval(uptimeCheckTimer);clearInterval(recoveryTimer);clearInterval(dragTimer);foreground.stop(true);adapter.stop();quotaAdapter.stop();sm.destroy();clearTimeout(saveTimer);ledger.save();globalShortcut.unregisterAll();tray?.destroy();tray=null;setTimeout(()=>app.exit(0),500).unref();});
+ app.on("window-all-closed",()=>{if(!tray||quitting)app.quit();});
 }
 
 

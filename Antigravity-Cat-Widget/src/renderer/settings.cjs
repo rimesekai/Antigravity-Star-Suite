@@ -1,7 +1,7 @@
 (async()=>{
  const api=window.widgetApi,$=id=>document.getElementById(id);let data=await api.get(),active=null,generation=0;
  for(const p of data.presets){const o=document.createElement("option");o.value=p.id;o.textContent=p.label;$("soundSet").append(o);}
- const keys=["hostWindowOnly","easterEggs","scale","alwaysOnTop","snap","reducedMotion","clickThrough","bubbleOn","turnCostOn","turnCostDurationMs","sound","soundSet","volume","manualQuota","manualPercent","manualWeeklyPercent"];
+ const keys=["hostWindowOnly","closeWithHost","easterEggs","scale","alwaysOnTop","snap","reducedMotion","clickThrough","bubbleOn","turnCostOn","turnCostDurationMs","sound","soundSet","volume","manualQuota","manualPercent","manualWeeklyPercent"];
  const original=Object.fromEntries(keys.map(key=>[key,data.settings[key]]));let pending=Promise.resolve();
  function save(partial,message="已保存"){pending=pending.then(async()=>{try{data=await api.save(partial);stop();render();$("saved").textContent=message;}catch{$("saved").textContent="保存失败，请重试";}});return pending;}
  function render(){for(const key of keys){const el=$(key);if(document.activeElement!==el){if(el.type==="checkbox")el.checked=data.settings[key];else el.value=key==="volume"?Math.round(data.settings.volume*100):data.settings[key];}}$("scale-value").textContent=data.settings.scale+" px";$("volume-value").textContent=Math.round(data.settings.volume*100)+"%";$("source").textContent=(data.source.online?"已找到 "+data.source.files+" 份日志":"未检测到会话日志")+" · 本机只读";$("audio-note").textContent=data.settings.sound?"已启用":"已静音";}
