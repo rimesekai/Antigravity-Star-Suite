@@ -4,6 +4,23 @@
 
 **两个插件独立启动、独立设置。Windows x64 本地项目，非 Google 官方产品。**
 
+> 本分支（`custom`）基于 [Monokumakuki/Antigravity-Star-Suite](https://github.com/Monokumakuki/Antigravity-Star-Suite) 进行个人定制，保留原作者 MIT 许可与全部素材版权声明。
+
+## 个人定制改动说明（`custom` 分支）
+
+1. **三气泡依次浮现/消失动效**（`index.html`、`widget.css`、`renderer.cjs`）
+   - 将原伪元素小圆点拆分为独立 DOM 元素，点击展开时按「小圆 → 中圆 → 大气泡」从下到上依次弹出，收起时按「大气泡 → 中圆 → 小圆」从上到下依次消失。
+2. **贴边布局与防压边微调**（`widget.css`、`host-visibility.cjs`）
+   - 角色位置统一跟随 `--agy-shift` 动态计算，避免缩放或拖动时出界；贴靠左右边缘（`data-dock="left" / "right"`）时预留 `4px` 水平安全边距以避开宿主窗口圆角裁切，底部保持 0 缝隙贴底。
+3. **异色瞳颜色对调**（`assets/character-packs/gemini-star-v1/frames/`）
+   - 在保留原有虹膜渐变、高光光斑与眼眶轮廓的基础上，将 `idle`、`proud`、`sad` 等帧图的左右眼色相精确互换（右侧停靠时为左粉右金）。
+4. **紧凑气泡与用量展示优化**（`widget.css`、`renderer.cjs`、`zh-CN.json`）
+   - 调整为紧凑椭圆气泡与侧边悬浮工具栏，隐藏多余关闭按钮，今日/最近步骤用量以 `M` 为单位展示，并补充了自定义中文台词。
+5. **Sidecar 联动与后台配额直连**（`host-quota.cjs`、`main/index.cjs`、`settings.cjs`、`ForegroundHost.cs`）
+   - 新增 `ForegroundHost.exe check` 窗口检测、最小化宿主识别、`closeWithHost` 随宿主关闭自动退出，以及通过本机 Language Server 地址与 CSRF Token 后台读取额度。
+6. **合入上游 v0.2.14 平滑跟随与窗口层级优化**（`ForegroundHost.cs`、`main/index.cjs`）
+   - 融合上游 `v0.2.14` 的四路 `SetWinEventHook` 事件驱动高精度跟随、`StackWithHost` 自然窗口层级（切出宿主自然被遮挡，切回自然显示，不再闪烁或强行置顶）以及 DWM 隐藏窗口过滤。
+
 <p align="center"><img src="Antigravity-Cat-Widget/assets/character-packs/gemini-star-v1/frames/idle.png" width="260" alt="星语 Gemini 猫娘桌宠"></p>
 
 ## 喵言喵语 · Cat Widget
